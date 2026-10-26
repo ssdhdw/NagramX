@@ -3,9 +3,11 @@ import org.gradle.internal.os.OperatingSystem
 
 plugins {
     id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
     id 'com.google.gms.google-services'
     id 'com.google.firebase.crashlytics'
-    id 'org.telegram.lottie-meta'
+    id 'org.telegram.build-plugin'
+    id 'org.telegram.build-app-plugin'
     id 'idea'
 }
 
@@ -24,7 +26,7 @@ idea {
 def buildTimestamp = System.getenv('BUILD_TIMESTAMP') ?: '0'
 def commitId = System.getenv('COMMIT_ID')
 def verName = "${APP_VERSION_NAME}${commitId?.take(7) ? "-${commitId.take(7)}" : ''}"
-def verCode = 1261
+def verCode = 1262
 
 def officialVer = APP_VERSION_NAME
 def officialCode = APP_VERSION_CODE
@@ -118,9 +120,12 @@ android {
         buildConfigField 'int', 'APP_ID', appId
         buildConfigField 'String', 'APP_HASH', '"' + appHash + '"'
         buildConfigField 'long', 'BUILD_TIMESTAMP', buildTimestamp + 'L'
+        buildConfigField 'boolean', 'DEBUG_VERSION', 'false'
+        buildConfigField 'boolean', 'DEBUG_PRIVATE_VERSION', 'false'
 
         externalNativeBuild {
             cmake {
+                targets 'tmessages.49'
                 arguments '-DANDROID_STL=c++_static', '-DANDROID_PLATFORM=android-27', '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON'
                 System.getenv('PATH').split(File.pathSeparator).any { path ->
                     var file = Paths.get("${path}${File.separator}ccache${if (OperatingSystem.current().windows) ".exe" else ""}").toFile()
@@ -166,6 +171,8 @@ android {
         debug {
             isDefault = true
             debuggable = true
+            buildConfigField 'boolean', 'DEBUG_VERSION', 'true'
+            buildConfigField 'boolean', 'DEBUG_PRIVATE_VERSION', 'true'
             jniDebuggable = true
             multiDexEnabled = true
             signingConfig = signingConfigs.release
@@ -194,7 +201,7 @@ android {
         }
     }
 
-    sourceSets.main.jniLibs.srcDirs = ['./jni/']
+    
 
     namespace = 'org.telegram.messenger'
 }
@@ -269,7 +276,7 @@ dependencies {
     implementation('com.stripe:stripe-android:2.0.2') {
         exclude group: 'com.android.support', module: 'support-annotations'
     }
-    implementation 'com.android.billingclient:billing:7.1.1'
+    implementation 'com.android.billingclient:billing:8.0.0'
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs_nio:2.1.5'
 
     // kotlin
@@ -292,4 +299,14 @@ dependencies {
     implementation 'app.nekogram.translator:translator:1.6.1'
 
     compileOnly fileTree('libs')
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.14.0'
+    implementation 'com.neovisionaries:nv-websocket-client:2.14'
+    implementation project(':TMessagesProj_Modules:media3:media-lib-exoplayer')
+    implementation project(':TMessagesProj_Modules:media3:media-lib-exoplayer-dash')
+    implementation project(':TMessagesProj_Modules:media3:media-lib-exoplayer-hls')
+    implementation project(':TMessagesProj_Modules:media3:media-lib-decoder-ffmpeg')
+    implementation project(':TMessagesProj_Modules:media3:media-lib-session')
 }

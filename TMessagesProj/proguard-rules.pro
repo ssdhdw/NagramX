@@ -3,6 +3,11 @@
 -keepclassmembernames class * {
     @com.google.android.gms.common.annotation.KeepName *;
 }
+
+-keep @interface androidx.annotation.Keep
+-keep @androidx.annotation.Keep class * { *; }
+-keepclasseswithmembers class * { @androidx.annotation.Keep *; }
+
 -keep class org.webrtc.* { *; }
 -keep class org.webrtc.audio.* { *; }
 -keep class org.webrtc.voiceengine.* { *; }
@@ -38,6 +43,10 @@
 
 -keepclassmembers class ** {
     @android.webkit.JavascriptInterface <methods>;
+}
+
+-keep class org.telegram.utils.code.highlight.PrismaHighlighter {
+    private static native <methods>;
 }
 
 # https://developers.google.com/ml-kit/known-issues#android_issues
@@ -104,8 +113,18 @@
 -keepclasseswithmembers class com.google.android.exoplayer2.source.smoothstreaming.SsMediaSource$Factory {
   <init>(com.google.android.exoplayer2.upstream.DataSource$Factory);
 }
+# Huawei Services
+-keep class com.huawei.hianalytics.**{ *; }
+-keep class com.huawei.updatesdk.**{ *; }
+-keep class com.huawei.hms.**{ *; }
+
+# Don't warn about checkerframework and Kotlin annotations
+-dontwarn org.checkerframework.**
+-dontwarn javax.annotation.**
 
 -keep class io.nano.tex.** {*;}
+
+-keep class org.telegram.tgnet.** { *; }
 
 # JLatexMath: macro/atom classes are loaded reflectively by Class.forName
 -keep class org.scilab.forge.jlatexmath.** { *; }
@@ -249,3 +268,6 @@
 -keepattributes *Annotation*
 -dontoptimize
 -dontobfuscate
+# Use -keep to explicitly keep any other classes shrinking would remove
+#-dontoptimize
+#-dontobfuscate
