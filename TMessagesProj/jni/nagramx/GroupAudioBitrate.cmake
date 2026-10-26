@@ -1,0 +1,23 @@
+# Keep NagramX's configurable group-call audio bitrate without modifying the
+# pinned tgcalls submodule. Compile a generated copy with the small adaptation.
+set(NAGRAM_GROUP_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/tgcalls/tgcalls/group/GroupInstanceCustomImpl.cpp")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${NAGRAM_GROUP_SOURCE}")
+file(READ "${NAGRAM_GROUP_SOURCE}" NAGRAM_GROUP_CODE)
+string(PREPEND NAGRAM_GROUP_CODE "#include \"nagramx/GroupAudioBitrate.h\"\n")
+string(REPLACE "_onMutedSpeechActivityDetected(std::move(descriptor.onMutedSpeechActivityDetected)) {" "_onMutedSpeechActivityDetected(std::move(descriptor.onMutedSpeechActivityDetected)) {\n        nagramx::groupAudioBitrate.store(_outgoingAudioBitrateKbit * 1000);" NAGRAM_GROUP_CODE "${NAGRAM_GROUP_CODE}")
+string(REPLACE "~GroupInstanceCustomInternal() {" "~GroupInstanceCustomInternal() {\n        nagramx::groupAudioBitrate.store(0);" NAGRAM_GROUP_CODE "${NAGRAM_GROUP_CODE}")
+string(REPLACE "const uint8_t opusMinBitrateKbps" "const int opusMinBitrateKbps" NAGRAM_GROUP_CODE "${NAGRAM_GROUP_CODE}")
+string(REPLACE "const uint8_t opusMaxBitrateKbps" "const int opusMaxBitrateKbps" NAGRAM_GROUP_CODE "${NAGRAM_GROUP_CODE}")
+string(REPLACE "const uint8_t opusStartBitrateKbps" "const int opusStartBitrateKbps" NAGRAM_GROUP_CODE "${NAGRAM_GROUP_CODE}")
+string(REPLACE "const int opusStartBitrateKbps = _outgoingAudioBitrateKbit;\n        const uint8_t opusPTimeMs = 120;" "const int opusStartBitrateKbps = _outgoingAudioBitrateKbit;\n        const uint8_t opusPTimeMs = _outgoingAudioBitrateKbit == 32 ? 120 : 10;" NAGRAM_GROUP_CODE "${NAGRAM_GROUP_CODE}")
+foreach(NAGRAM_BITRATE_FIELD min_bitrate_bps start_bitrate_bps max_bitrate_bps)
+    string(REPLACE "preferences.${NAGRAM_BITRATE_FIELD} = 32000;" "preferences.${NAGRAM_BITRATE_FIELD} = _outgoingAudioBitrateKbit * 1000;" NAGRAM_GROUP_CODE "${NAGRAM_GROUP_CODE}")
+endforeach()
+string(REPLACE "webrtc::field_trial::InitFieldTrialsFromString(" "const std::string nagramTrials = std::string(" NAGRAM_GROUP_CODE "${NAGRAM_GROUP_CODE}")
+string(REPLACE "\"WebRTC-Audio-Allocation/min:32kbps,max:32kbps/\"" "\"WebRTC-Audio-Allocation/min:\" + std::to_string(_outgoingAudioBitrateKbit) + \"kbps,max:\" + std::to_string(_outgoingAudioBitrateKbit) + \"kbps/\"" NAGRAM_GROUP_CODE "${NAGRAM_GROUP_CODE}")
+string(REPLACE "bool takeAudioLevelFromNetwork =" "webrtc::field_trial::InitFieldTrialsFromString(nagramTrials.c_str());\n        bool takeAudioLevelFromNetwork =" NAGRAM_GROUP_CODE "${NAGRAM_GROUP_CODE}")
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/nagramx")
+set(NAGRAM_GROUP_GENERATED "${CMAKE_CURRENT_BINARY_DIR}/nagramx/GroupInstanceCustomImpl.cpp")
+file(WRITE "${NAGRAM_GROUP_GENERATED}" "${NAGRAM_GROUP_CODE}")
+set_source_files_properties("${NAGRAM_GROUP_GENERATED}" PROPERTIES
+        INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/tgcalls/tgcalls/group")

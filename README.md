@@ -1,7 +1,8 @@
 # Nagram X
 
-> [!IMPORTANT]
-> This project is archived and no longer maintained. No further updates, bug fixes, or support will be provided. The source code and existing releases remain available for reference and for anyone who wishes to continue development in a fork.
+This fork continues Nagram X development and integrates Telegram Android 13.1.1
+(7237), upstream commit `3de37c8cfb039452be7398909461da6288babf15`.
+The original Nagram X repository is archived.
 
 ## Archived Downloads
 
@@ -22,13 +23,13 @@ Official APKs use the following Android signing certificate:
 1. Clone the repository with its submodules:
 
     ```bash
-    git clone --recursive --shallow-submodules https://github.com/risin42/NagramX.git NagramX
+    git -c core.longpaths=true clone --recursive --shallow-submodules https://github.com/ssdhdw/NagramX.git NagramX
     ```
 
     If you already cloned the repository without submodules, run:
 
     ```bash
-    git submodule update --init --recursive --depth=1
+    git -c core.longpaths=true submodule update --init --recursive --depth=1
     ```
 
 2. Obtain API credentials (`TELEGRAM_APP_ID` and `TELEGRAM_APP_HASH`) from [Telegram Developer Portal](https://my.telegram.org/auth). Create `local.properties` in the project root with:
@@ -53,7 +54,14 @@ Official APKs use the following Android signing certificate:
     - Set your Google Maps API key in the `com.google.android.maps.v2.API_KEY` meta-data entry in `TMessagesProj/src/main/AndroidManifest.xml`.
     - Set `BaseRemoteHelper.CHANNEL_METADATA_ID` in `TMessagesProj/src/main/java/tw/nekomimi/nekogram/helpers/remote/BaseRemoteHelper.java` to your metadata channel's numeric ID, without the `-100` prefix.
 
-6. Open the project in Android Studio to start building.
+6. Install JDK 21, Android SDK platform 37, Build Tools 36.0.0,
+   NDK 27.2.12479018 and CMake 3.31.6 or newer. Open the project in Android Studio
+   to start building. Set `sdk.dir` in `local.properties` if the SDK is not detected.
+   An external CMake installation can be selected with `cmake.dir`.
+
+   For an ARM64 build, set `NATIVE_TARGET=arm64-v8a` and run
+   `gradlew TMessagesProj:assembleDebug`. Nagram X uses one application module;
+   the Media3 libraries remain pinned to the upstream submodule revision.
 
 ## GitHub Actions Build
 

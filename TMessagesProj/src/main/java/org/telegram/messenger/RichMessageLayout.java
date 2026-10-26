@@ -45,7 +45,6 @@ import android.text.style.ClickableSpan;
 import android.text.style.MetricAffectingSpan;
 import android.text.style.ReplacementSpan;
 import android.text.style.URLSpan;
-import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
@@ -128,6 +127,7 @@ import org.telegram.ui.iv.RichTextStyle;
 import org.telegram.ui.iv.Latex;
 import org.telegram.ui.PremiumPreviewFragment;
 import org.telegram.ui.web.WebInstantView;
+import org.telegram.utils.code.highlight.CodeHighlighting;
 
 import java.io.File;
 import java.net.URLDecoder;
@@ -135,6 +135,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Stack;
 import java.util.concurrent.atomic.AtomicReference;
@@ -155,6 +156,7 @@ public class RichMessageLayout {
     private static final int ORDERED_LIST_MARKER_START_DP = 6;
 
     public final ArrayList<RichUnsupportedBlock> unsupportedBlocks = new ArrayList<>();
+    public final ArrayList<RichUnsupportedBlock> unsupportedBlocksRoot = new ArrayList<>();
     public final ArrayList<RichBlock> blocks = new ArrayList<>();
     public final ArrayList<QuoteBackground> quotes = new ArrayList<>();
     private Drawable pullquoteIcon;
@@ -360,6 +362,7 @@ public class RichMessageLayout {
         }
 
         unsupportedBlocks.clear();
+        unsupportedBlocksRoot.clear();
         blocks.clear();
         quotes.clear();
         anchors.clear();
@@ -640,6 +643,25 @@ public class RichMessageLayout {
     public void snapshotForDetailsAnimation() {
         for (int i = 0; i < blocks.size(); ++i) {
             blocks.get(i).snapshot();
+        }
+    }
+
+    /** Opens collapsed details blocks (e.g. to show a highlighted quote inside them) */
+    public void openDetails(List<RichDetailsBlock> details) {
+        if (details == null || details.isEmpty()) return;
+        snapshotForDetailsAnimation();
+        for (RichDetailsBlock d : details) {
+            if (d.block.open) continue;
+            d.block.open = true;
+            d.arrow.setAnimationProgressAnimated(0f);
+        }
+        detailsAnimating = true;
+        reposition();
+        if (view != null) {
+            view.invalidate();
+        }
+        if (cell != null && delegate != null) {
+            delegate.forceUpdate(cell, true, true);
         }
     }
 
@@ -1062,7 +1084,12 @@ public class RichMessageLayout {
             blocks.add(block);
             return block;
         } else if (pageBlock instanceof TL_iv.pageBlockTable) {
-            final RichBlock block = new RichTableBlock(this, padding, maxWidth, (TL_iv.pageBlockTable) pageBlock);
+            final RichBlock block;
+            try {
+                block = new RichTableBlock(this, padding, maxWidth, (TL_iv.pageBlockTable) pageBlock);
+            } catch (IllegalArgumentException e) {
+                return null;
+            }
             block.accessibilityLabelResId = R.string.AccDescrIVTable;
             blocks.add(block);
             return block;
@@ -1153,11 +1180,15 @@ public class RichMessageLayout {
             }
             return null;
         } else if (pageBlock instanceof TL_iv.pageBlockUnsupported) {
+            final int o = BitwiseUtils.hasFlag(textFlags, TEXT_FLAG_BLOCK_QUOTE) ? dp(6) : level > 0 ? dp(4) : 0;
             final RichUnsupportedBlock block = new RichUnsupportedBlock(this, new Rect(
-                -dp(7), Math.max(dp(14), padding.top),
-                -dp(7), Math.max(dp(14), padding.bottom)
-            ), maxWidth, blocks.size());
+                padding.left + o - dp(7), Math.max(dp(14), padding.top),
+                padding.right + o - dp(7), Math.max(dp(14), padding.bottom)
+            ), maxWidth, blocks.size(), level);
             unsupportedBlocks.add(block);
+            if (level == 0) {
+                unsupportedBlocksRoot.add(block);
+            }
             blocks.add(block);
             return block;
         } else if (pageBlock instanceof TL_iv.pageBlockDetails) {
@@ -1219,8 +1250,17 @@ public class RichMessageLayout {
         return !unsupportedBlocks.isEmpty();
     }
 
+    public boolean hasRootUnsupportedBlocks() {
+        return !unsupportedBlocksRoot.isEmpty();
+
+    }
+
     public ArrayList<RichUnsupportedBlock> getUnsupportedHoles() {
         return unsupportedBlocks;
+    }
+
+    public ArrayList<RichUnsupportedBlock> getUnsupportedHolesRoot() {
+        return unsupportedBlocksRoot;
     }
 
     public int getMinWidth() {
@@ -1949,13 +1989,41 @@ public class RichMessageLayout {
     }
 
     public CharSequence formatText(TL_iv.RichText text) {
-        return formatText(text, new SpannableStringBuilder(), 0);
+        return formatText(text, 0);
     }
     public CharSequence formatText(TL_iv.RichText text, int flags) {
+        final SpannableStringBuilder out = new SpannableStringBuilder();
         if (flags == 0)
-            return formatText(text, new SpannableStringBuilder(), 0);
+            formatText(text, out, 0);
         else
-            return formatTextAndSetSpan(text, new SpannableStringBuilder(), flags, new StyleSpan(this, flags));
+            formatTextAndSetSpan(text, out, flags, new StyleSpan(this, flags));
+        if (text != null && out.length() > 0) {
+            out.setSpan(new QuoteRootSpan(text, flags), 0, out.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+        return out;
+    }
+
+    /** Marks the text produced from a root RichText node, so a selection can be mapped back to it for quoting. */
+    public static class QuoteRootSpan {
+        public final TL_iv.RichText text;
+        public final int flags;
+        public QuoteRootSpan(TL_iv.RichText text, int flags) {
+            this.text = text;
+            this.flags = flags;
+        }
+    }
+
+    private IdentityHashMap<TL_iv.RichText, int[]> quoteRecorder;
+
+    /** Formats text the same way formatText(text, flags) does, recording the [start, end) range produced by every node. */
+    public CharSequence formatTextRecording(TL_iv.RichText text, int flags, IdentityHashMap<TL_iv.RichText, int[]> recorder) {
+        final IdentityHashMap<TL_iv.RichText, int[]> prev = quoteRecorder;
+        quoteRecorder = recorder;
+        try {
+            return formatText(text, new SpannableStringBuilder(), flags);
+        } finally {
+            quoteRecorder = prev;
+        }
     }
     private void setSpansWithoutClash(Object span, SpannableStringBuilder out, int start, int end) {
         if (span instanceof StyleSpan) {
@@ -2014,6 +2082,14 @@ public class RichMessageLayout {
         return run;
     }
     public CharSequence formatText(TL_iv.RichText text, SpannableStringBuilder out, int flags) {
+        final int start = out.length();
+        formatTextNode(text, out, flags);
+        if (quoteRecorder != null && text != null) {
+            quoteRecorder.put(text, new int[] { start, out.length() });
+        }
+        return out;
+    }
+    private CharSequence formatTextNode(TL_iv.RichText text, SpannableStringBuilder out, int flags) {
         if (text instanceof TL_iv.textEmpty) {
 
         } else if (text instanceof TL_iv.textPlain) {
@@ -2159,6 +2235,9 @@ public class RichMessageLayout {
                 tel = "+" + tel;
             }
             formatTextAndSetSpan(text.text, out, flags, new URLSpanReplacement("tel:" + tel, getTextStyleRun(TextStyleSpan.FLAG_STYLE_TEXT_URL)));
+        } else if (text instanceof TL_iv.textTonAddress) {
+            final String address = getString(text);
+            formatTextAndSetSpan(text.text, out, flags, new URLSpanNoUnderline("tonaddress:" + address));
         } else if (text instanceof TL_iv.textBankCard) {
             final String bankCard = getString(text);
             formatTextAndSetSpan(text.text, out, flags, new URLSpanNoUnderline("card:" + bankCard));
@@ -2777,6 +2856,31 @@ public class RichMessageLayout {
         private int pressedLinkStart, pressedLinkEnd;
         private AnimatedEmojiSpan pressedEmoji;
         private RichButtonSpan pressedButtonSpan;
+        private final RectF soleButtonHitBounds = new RectF();
+
+        private RichButtonSpan getSoleButtonSpan() {
+            if (!(layout.getText() instanceof Spanned)) return null;
+            final Spanned text = (Spanned) layout.getText();
+            final RichButtonSpan[] spans = text.getSpans(0, text.length(), RichButtonSpan.class);
+            if (spans.length != 1) return null;
+            final int spanStart = text.getSpanStart(spans[0]);
+            final int spanEnd = text.getSpanEnd(spans[0]);
+            for (int i = 0; i < text.length(); i++) {
+                if ((i < spanStart || i >= spanEnd) && !Character.isWhitespace(text.charAt(i))) {
+                    return null;
+                }
+            }
+            return spans[0];
+        }
+
+        private void setSoleButtonHitBounds(float left, float top, float right, float bottom) {
+            soleButtonHitBounds.set(left, top, right, bottom);
+        }
+
+        private boolean buttonContains(RichButtonSpan span, float x, float y) {
+            return span.contains(x, y, dp(8))
+                || (span == getSoleButtonSpan() && soleButtonHitBounds.contains(x, y));
+        }
 
         public boolean onTouchEvent(MotionEvent event) {
             final int act = event.getActionMasked();
@@ -2800,7 +2904,7 @@ public class RichMessageLayout {
                 final RichButtonSpan[] buttonSpans = getButtonSpans();
                 if (buttonSpans != null) {
                     for (RichButtonSpan span : buttonSpans) {
-                        if (span.contains(lx, ly)) {
+                        if (buttonContains(span, lx, ly)) {
                             if (span.isDisabled()) {
                                 return true;
                             }
@@ -2902,7 +3006,7 @@ public class RichMessageLayout {
             if (act == MotionEvent.ACTION_MOVE) {
                 if (pressedButtonSpan != null) {
                     // drop the press once the finger leaves the pill, same as a bot button row
-                    if (!pressedButtonSpan.contains(lx, ly)) {
+                    if (!buttonContains(pressedButtonSpan, lx, ly)) {
                         cancelLongPress();
                         pressedButtonSpan.setPressed(false);
                         pressedButtonSpan = null;
@@ -4490,6 +4594,11 @@ public class RichMessageLayout {
                         pressedCellText = (Text) cell.textLayout;
                         cellDx = cell.getTextX() - scrollX;
                         cellDy = titleHeight + cell.getTextY();
+                        pressedCellText.setSoleButtonHitBounds(
+                            cell.x - cell.getTextX(), cell.y - cell.getTextY(),
+                            cell.x + cell.getMeasuredWidth() - cell.getTextX(),
+                            cell.y + cell.getMeasuredHeight() - cell.getTextY()
+                        );
                         event.offsetLocation(-cellDx, -cellDy);
                         textHandlingTouch = pressedCellText.onTouchEvent(event);
                         event.offsetLocation(cellDx, cellDy);
@@ -4715,13 +4824,15 @@ public class RichMessageLayout {
         public final int unsupportedBlockWidth;
         public final int unsupportedBlockHeight;
         public final int index;
+        public final int level;
 
         public TornEdge.Params tornParams;
         public Bitmap tornBitmap;
 
-        public RichUnsupportedBlock(RichMessageLayout root, Rect padding, int maxWidth, int index) {
+        public RichUnsupportedBlock(RichMessageLayout root, Rect padding, int maxWidth, int index, int level) {
             super(root, padding, maxWidth);
             this.index = index;
+            this.level = level;
 
             unsupportedBlockDrawable = new UnsupportedBlockDrawable(root.resourcesProvider);
             unsupportedBlockDrawable.setCallback(this);
@@ -5217,7 +5328,7 @@ public class RichMessageLayout {
             // is still capped to maxWidth and fades the clipped end when it has to be narrower.
             final int oneLineWidth = Math.max(1,
                 (int) Math.ceil(Layout.getDesiredWidth(formatted, layout.textPaint)) + dp(2));
-            text = new Text(layout, formatted, oneLineWidth, Layout.Alignment.ALIGN_CENTER);
+            text = new Text(layout, formatted, 100_000, Layout.Alignment.ALIGN_CENTER);
             text.setDrawAtOrigin(true);
             text.doNotInvalidateEmojiInParent = true;
 
@@ -5748,6 +5859,11 @@ public class RichMessageLayout {
             return bounds.contains(x, y);
         }
 
+        public boolean contains(float x, float y, float padding) {
+            return x >= bounds.left - padding && x < bounds.right + padding
+                && y >= bounds.top - padding && y < bounds.bottom + padding;
+        }
+
         public void setPressed(boolean pressed) {
             button.setPressed(pressed);
         }
@@ -5834,6 +5950,7 @@ public class RichMessageLayout {
             content = new SpannableString(plain);
             if (content.length() > 0) {
                 content.setSpan(new StyleSpan(root, TEXT_FLAG_BLOCK_CODE), 0, content.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                content.setSpan(new QuoteRootSpan(block.text, 0), 0, content.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
                 if (prevBlock != null) {
                     final SpannableString oldContent = prevBlock.content;
                     final boolean prevIsLocked = oldContent instanceof CodeHighlighting.LockedWithFallbackSpannableString;
